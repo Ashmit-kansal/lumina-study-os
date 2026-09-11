@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { useApp } from '../../context/AppContext';
+import { RevisionScheduleItem } from '../../types';
 import {
   Calendar,
   Clock,
@@ -13,13 +14,19 @@ import {
   BookOpen,
   Bell,
   Send,
+  Zap,
+  Brain,
+  Wand2,
 } from 'lucide-react';
 
 interface SetRevisionScheduleModalProps {
   isOpen: boolean;
   onClose: () => void;
-  defaultType?: 'file' | 'folder';
+  defaultType?: 'file' | 'folder' | 'subject';
   defaultTargetId?: string;
+  defaultSubjectId?: string;
+  onStartActiveRecall?: (item: RevisionScheduleItem) => void;
+  onOpenAIGenerator?: (subjectId?: string, noteId?: string) => void;
 }
 
 export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> = ({
@@ -27,16 +34,16 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
   onClose,
   defaultType = 'file',
   defaultTargetId,
+  defaultSubjectId,
+  onStartActiveRecall,
+  onOpenAIGenerator,
 }) => {
   const { notes, folders, subjects, scheduleRevision } = useApp();
 
-  const [targetType, setTargetType] = useState<'file' | 'folder'>(defaultType);
-  const [selectedFileId, setSelectedFileId] = useState<string>(
-    defaultTargetId && defaultType === 'file' ? defaultTargetId : notes[0]?.id || ''
-  );
-  const [selectedFolderId, setSelectedFolderId] = useState<string>(
-    defaultTargetId && defaultType === 'folder' ? defaultTargetId : folders[0]?.id || ''
-  );
+  const [targetType, setTargetType] = useState<'file' | 'folder' | 'subject'>('file');
+  const [selectedFileId, setSelectedFileId] = useState<string>('');
+  const [selectedFolderId, setSelectedFolderId] = useState<string>('');
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>('');
 
   // Interval presets in days
   const [intervalDays, setIntervalDays] = useState<number>(1);
@@ -45,8 +52,31 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
   const [emailReminder, setEmailReminder] = useState<boolean>(true);
   const [userEmail, setUserEmail] = useState<string>('student@university.edu');
 
+  // Sync props when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      if (defaultType === 'folder') {
+        setTargetType('folder');
+        setSelectedFolderId(defaultTargetId || folders[0]?.id || '');
+      } else if (defaultType === 'subject') {
+        setTargetType('subject');
+        setSelectedSubjectId(defaultTargetId || subjects[0]?.id || '');
+      } else {
+        setTargetType('file');
+        setSelectedFileId(defaultTargetId || notes[0]?.id || '');
+      }
+
+      if (defaultSubjectId) {
+        setSelectedSubjectId(defaultSubjectId);
+      }
+      setIntervalDays(1);
+      setCustomDate('');
+    }
+  }, [isOpen, defaultType, defaultTargetId, defaultSubjectId, notes, folders, subjects]);
+
   const selectedFile = notes.find((n) => n.id === selectedFileId);
   const selectedFolder = folders.find((f) => f.id === selectedFolderId);
+  const selectedSubject = subjects.find((s) => s.id === selectedSubjectId);
 
   // Calculate target date based on intervalDays
   const getTargetDateStr = (days: number) => {
@@ -55,9 +85,7 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
     return d.toISOString().split('T')[0];
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-
+  const constructScheduleItem = (): RevisionScheduleItem | null => {
     let targetId = '';
     let title = '';
     let subjectId = '';
@@ -79,14 +107,20 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
       const sub = subjects.find((s) => s.id === subjectId);
       subjectName = sub?.name || 'General';
       folderName = selectedFolder.name;
+    } else if (targetType === 'subject' && selectedSubject) {
+      targetId = selectedSubject.id;
+      title = `${selectedSubject.name} (Course)`;
+      subjectId = selectedSubject.id;
+      subjectName = selectedSubject.name;
     } else {
-      return;
+      return null;
     }
 
     const scheduledDateStr = customDate || getTargetDateStr(intervalDays);
 
-    scheduleRevision({
-      targetType,
+    return {
+      id: 'rev_' + Date.now(),
+      targetType: targetType === 'subject' ? 'folder' : targetType,
       targetId,
       title,
       subjectId,
@@ -97,17 +131,71 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
       intervalDays,
       emailReminder,
       userEmail: emailReminder ? userEmail : undefined,
+      revisionCount: 0,
+      status: 'scheduled',
+    };
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const item = constructScheduleItem();
+    if (!item) return;
+
+    scheduleRevision({
+      targetType: item.targetType,
+      targetId: item.targetId,
+      title: item.title,
+      subjectId: item.subjectId,
+      subjectName: item.subjectName,
+      folderName: item.folderName,
+      scheduledDate: item.scheduledDate,
+      scheduledTime: item.scheduledTime,
+      intervalDays: item.intervalDays,
+      emailReminder: item.emailReminder,
+      userEmail: item.userEmail,
     });
 
     onClose();
+  };
+
+  const handleInstantActiveRecall = () => {
+    const item = constructScheduleItem();
+    if (!item) return;
+
+    const scheduled = scheduleRevision({
+      targetType: item.targetType,
+      targetId: item.targetId,
+      title: item.title,
+      subjectId: item.subjectId,
+      subjectName: item.subjectName,
+      folderName: item.folderName,
+      scheduledDate: new Date().toISOString().split('T')[0],
+      scheduledTime: 'Now',
+      intervalDays: 1,
+      emailReminder: false,
+    });
+
+    onClose();
+    if (onStartActiveRecall) {
+      onStartActiveRecall(scheduled);
+    }
+  };
+
+  const handleTriggerAIFlashcards = () => {
+    onClose();
+    if (onOpenAIGenerator) {
+      const subId = targetType === 'file' ? selectedFile?.subjectId : targetType === 'folder' ? selectedFolder?.subjectId : selectedSubject?.id;
+      const nId = targetType === 'file' ? selectedFile?.id : undefined;
+      onOpenAIGenerator(subId, nId);
+    }
   };
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Set Revision Schedule for Folder or File"
-      subtitle="Schedule timely recall sessions and receive automated email timer reminders"
+      title="Custom Revision & Spaced Repetition"
+      subtitle="Set custom active recall intervals, schedule automated reminders, or launch revision cards"
       maxWidth="max-w-xl"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -116,31 +204,44 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
           <label className="text-xs font-semibold text-slate-300 block mb-1.5">
             What do you want to revise?
           </label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => setTargetType('file')}
-              className={`p-2.5 rounded-xl border flex items-center justify-center gap-2 text-xs font-bold transition-all ${
+              className={`p-2 rounded-xl border flex items-center justify-center gap-1.5 text-xs font-bold transition-all ${
                 targetType === 'file'
                   ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/20'
                   : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
               }`}
             >
-              <FileText className="w-4 h-4" />
-              <span>Specific Text File</span>
+              <FileText className="w-3.5 h-3.5" />
+              <span>Note / File</span>
             </button>
 
             <button
               type="button"
               onClick={() => setTargetType('folder')}
-              className={`p-2.5 rounded-xl border flex items-center justify-center gap-2 text-xs font-bold transition-all ${
+              className={`p-2 rounded-xl border flex items-center justify-center gap-1.5 text-xs font-bold transition-all ${
                 targetType === 'folder'
                   ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/20'
                   : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
               }`}
             >
-              <FolderIcon className="w-4 h-4" />
-              <span>Entire Folder</span>
+              <FolderIcon className="w-3.5 h-3.5" />
+              <span>Study Folder</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTargetType('subject')}
+              className={`p-2 rounded-xl border flex items-center justify-center gap-1.5 text-xs font-bold transition-all ${
+                targetType === 'subject'
+                  ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/20'
+                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Whole Subject</span>
             </button>
           </div>
         </div>
@@ -149,7 +250,7 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
         {targetType === 'file' ? (
           <div>
             <label className="text-xs font-semibold text-slate-300 block mb-1">
-              Select Document / File *
+              Select Document / Note *
             </label>
             <select
               value={selectedFileId}
@@ -159,14 +260,14 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
               {notes.map((n) => {
                 const sub = subjects.find((s) => s.id === n.subjectId);
                 return (
-                  <option key={n.id} value={n.id}>
+                  <option key={n.id} value={n.id} className="bg-slate-900 text-slate-100 py-1">
                     📄 {n.title || 'Untitled.txt'} ({sub?.name || 'General'})
                   </option>
                 );
               })}
             </select>
           </div>
-        ) : (
+        ) : targetType === 'folder' ? (
           <div>
             <label className="text-xs font-semibold text-slate-300 block mb-1">
               Select Study Folder *
@@ -179,23 +280,40 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
               {folders.map((f) => {
                 const sub = subjects.find((s) => s.id === f.subjectId);
                 return (
-                  <option key={f.id} value={f.id}>
+                  <option key={f.id} value={f.id} className="bg-slate-900 text-slate-100 py-1">
                     📁 {f.name} ({sub?.name || 'General'})
                   </option>
                 );
               })}
             </select>
           </div>
+        ) : (
+          <div>
+            <label className="text-xs font-semibold text-slate-300 block mb-1">
+              Select Subject (Course) *
+            </label>
+            <select
+              value={selectedSubjectId}
+              onChange={(e) => setSelectedSubjectId(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+            >
+              {subjects.map((sub) => (
+                <option key={sub.id} value={sub.id} className="bg-slate-900 text-slate-100 py-1">
+                  📘 {sub.name}
+                </option>
+              ))}
+            </select>
+          </div>
         )}
 
-        {/* Step 3: Revision Timer / Interval Preset Pills */}
+        {/* Step 3: Spaced Repetition Interval Preset Pills + Custom Date */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <label className="text-xs font-semibold text-slate-300">
-              When should this be revised? (Timer Interval)
+              Spaced Repetition Schedule
             </label>
-            <span className="text-[11px] text-indigo-400 font-mono">
-              Date: {customDate || getTargetDateStr(intervalDays)}
+            <span className="text-[11px] text-indigo-400 font-mono font-semibold">
+              📅 Next Review: {customDate || getTargetDateStr(intervalDays)}
             </span>
           </div>
 
@@ -220,13 +338,27 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
                   className={`py-2 rounded-xl text-xs font-bold border transition-all ${
                     isSelected
                       ? 'bg-indigo-600 border-indigo-500 text-white shadow-sm'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-900'
                   }`}
                 >
                   {p.label}
                 </button>
               );
             })}
+          </div>
+
+          {/* Custom Date Input */}
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-[11px] text-slate-400">Or pick custom date:</span>
+            <input
+              type="date"
+              value={customDate}
+              min={new Date().toISOString().split('T')[0]}
+              onChange={(e) => {
+                setCustomDate(e.target.value);
+              }}
+              className="bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+            />
           </div>
         </div>
 
@@ -242,12 +374,12 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
               />
               <span className="flex items-center gap-1.5">
                 <Mail className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Send Email Timer Alert</span>
+                <span>Send Email Spaced Repetition Reminder</span>
               </span>
             </label>
 
             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-              Simulated UI
+              Active Recall
             </span>
           </div>
 
@@ -255,7 +387,7 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
               <div>
                 <label className="text-[10px] text-slate-400 block mb-0.5 font-medium">
-                  Your Notification Email
+                  Notification Email
                 </label>
                 <input
                   type="email"
@@ -267,7 +399,7 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
 
               <div>
                 <label className="text-[10px] text-slate-400 block mb-0.5 font-medium">
-                  Daily Delivery Time
+                  Delivery Time
                 </label>
                 <input
                   type="text"
@@ -280,22 +412,51 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
           )}
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="px-6 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 active:scale-95 flex items-center gap-1.5 transition-all"
-          >
-            <Calendar className="w-4 h-4" />
-            <span>Schedule Revision</span>
-          </button>
+        {/* Quick Flashcards & Immediate Actions */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+          <div className="flex items-center gap-2">
+            {onOpenAIGenerator && (
+              <button
+                type="button"
+                onClick={handleTriggerAIFlashcards}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-purple-500/50 text-purple-300 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all"
+                title="Generate AI Flashcards for this note"
+              >
+                <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+                <span>AI Flashcards</span>
+              </button>
+            )}
+
+            {onStartActiveRecall && (
+              <button
+                type="button"
+                onClick={handleInstantActiveRecall}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/50 text-emerald-300 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all"
+                title="Launch active revision session right now"
+              >
+                <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Revise Now</span>
+              </button>
+            )}
+          </div>
+
+          {/* Form Submit & Cancel */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 active:scale-95 flex items-center gap-1.5 transition-all"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Save Schedule</span>
+            </button>
+          </div>
         </div>
       </form>
     </Modal>

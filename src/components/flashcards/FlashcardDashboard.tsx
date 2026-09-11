@@ -4,6 +4,7 @@ import { RevisionScheduleItem } from '../../types';
 import { SetRevisionScheduleModal } from './SetRevisionScheduleModal';
 import { ActiveRevisionModal } from './ActiveRevisionModal';
 import { EmailReminderSettingsModal } from './EmailReminderSettingsModal';
+import { useRouter } from '../../context/RouterContext';
 import {
   Brain,
   Sparkles,
@@ -25,16 +26,25 @@ import {
   Bell,
   Award,
   Zap,
+  Check,
+  ExternalLink,
 } from 'lucide-react';
 
 export const FlashcardDashboard: React.FC = () => {
-  const { revisionItems, deleteRevisionItem, subjects, emailConfig } = useApp();
+  const { revisionItems, deleteRevisionItem, completeRevision, subjects, emailConfig } = useApp();
+  const { navigate } = useRouter();
 
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [activeRevisionItem, setActiveRevisionItem] = useState<RevisionScheduleItem | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string | undefined>(undefined);
+  const [actionToast, setActionToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setActionToast(msg);
+    setTimeout(() => setActionToast(null), 3000);
+  };
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -59,8 +69,35 @@ export const FlashcardDashboard: React.FC = () => {
     return true;
   });
 
+  const handleMarkComplete = (item: RevisionScheduleItem) => {
+    const nextDays = item.intervalDays ? Math.max(1, Math.round(item.intervalDays * 2)) : 3;
+    completeRevision(item.id, nextDays);
+    showToast(`Marked "${item.title}" complete! Next review in ${nextDays} days.`);
+  };
+
+  const handleGoToNoteOrFolder = (item: RevisionScheduleItem) => {
+    if (item.targetType === 'file') {
+      navigate(`/notes?note=${item.targetId}`);
+    } else if (item.targetType === 'folder') {
+      const subQuery = item.subjectId ? `&subject=${item.subjectId}` : '';
+      navigate(`/notes?folder=${item.targetId}${subQuery}`);
+    } else if (item.targetType === 'subject') {
+      navigate(`/notes?subject=${item.subjectId}`);
+    } else {
+      navigate('/notes');
+    }
+  };
+
   return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-16">
+    <div className="space-y-6 max-w-6xl mx-auto pb-16 relative">
+      {/* Toast Notification */}
+      {actionToast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white text-xs font-semibold rounded-2xl shadow-2xl border border-emerald-400 animate-fade-in">
+          <CheckCircle2 className="w-4 h-4" />
+          <span>{actionToast}</span>
+        </div>
+      )}
+
       {/* Top Banner & Main Actions */}
       <div className="glass-panel-glow p-6 sm:p-8 rounded-3xl border border-indigo-500/30 relative overflow-hidden shadow-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-purple-950/30">
         <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none hidden sm:block">
@@ -82,7 +119,7 @@ export const FlashcardDashboard: React.FC = () => {
               Smart Revision &amp; Active Recall Hub
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 max-w-xl leading-relaxed">
-              Schedule revision timers for your study folders and text files. When due, revise with <strong>AI-generated flashcards</strong> or a <strong>manual reader</strong>, then evaluate your retention with <strong>adaptive AI quizzes</strong>!
+              Schedule revision timers for your study folders and text files. When due, revise with <strong>AI-generated flashcards</strong> or <strong>follow your notes directly</strong>, then evaluate your retention with <strong>adaptive AI quizzes</strong>!
             </p>
           </div>
 
@@ -211,14 +248,36 @@ export const FlashcardDashboard: React.FC = () => {
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setActiveRevisionItem(item)}
-                    className="w-full py-2.5 bg-gradient-to-r from-amber-500 via-indigo-600 to-purple-600 hover:from-amber-400 hover:to-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-95 transition-all"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>Start Revision (AI Cards / Reader)</span>
-                  </button>
+                  {/* Actions: Start Revision + Mark Complete + Go to Notes */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setActiveRevisionItem(item)}
+                      className="flex-1 py-2.5 bg-gradient-to-r from-amber-500 via-indigo-600 to-purple-600 hover:from-amber-400 hover:to-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/30 active:scale-95 transition-all"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>Start Revision</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleMarkComplete(item)}
+                      className="p-2.5 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-sm active:scale-95 transition-all"
+                      title="Mark revision as complete"
+                    >
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span className="hidden sm:inline">Complete</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleGoToNoteOrFolder(item)}
+                      className="p-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white rounded-xl text-xs font-semibold flex items-center justify-center transition-colors"
+                      title="Open note or folder directly in Notes Workspace"
+                    >
+                      <ExternalLink className="w-4 h-4 text-indigo-400" />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -324,13 +383,36 @@ export const FlashcardDashboard: React.FC = () => {
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setActiveRevisionItem(item)}
-                    className="w-full py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-                  >
-                    <Play className="w-3 h-3 fill-current" /> Revise Early
-                  </button>
+                  {/* Actions: Revise Early + Mark Complete + Go to Notes */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setActiveRevisionItem(item)}
+                      className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Play className="w-3 h-3 fill-current" />
+                      <span>Revise Early</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleMarkComplete(item)}
+                      className="px-2.5 py-2 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/30 text-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all"
+                      title="Mark revision as complete"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Complete</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleGoToNoteOrFolder(item)}
+                      className="p-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white rounded-xl text-xs transition-colors"
+                      title="Open in Notes Workspace"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-indigo-400" />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

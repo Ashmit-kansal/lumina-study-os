@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { useApp } from '../../context/AppContext';
 import { RevisionScheduleItem, Flashcard } from '../../types';
+import { ReviewRating, getIntervalPreview } from '../../services/sm2Service';
 import {
   Brain,
   Sparkles,
@@ -17,13 +18,19 @@ import {
   Check,
   Award,
   Zap,
+  Layers,
+  Search,
+  Sliders,
+  ExternalLink,
 } from 'lucide-react';
+import { useRouter } from '../../context/RouterContext';
 import { markdownToFormattedHtml } from '../../utils/textFormatter';
 
 interface ActiveRevisionModalProps {
   isOpen: boolean;
   onClose: () => void;
   revisionItem: RevisionScheduleItem | null;
+  onOpenAIGenerator?: (subjectId?: string, noteId?: string) => void;
 }
 
 interface AIQuizQuestion {
@@ -38,16 +45,26 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
   isOpen,
   onClose,
   revisionItem,
+  onOpenAIGenerator,
 }) => {
-  const { notes, folders, subjects, completeRevision } = useApp();
+  const { notes, folders, subjects, flashcards, reviewFlashcard, completeRevision } = useApp();
+  const { navigate } = useRouter();
 
   // Workflow stages: 'study' -> 'decision' -> 'quiz' | 'manual_interval' -> 'completed'
   const [stage, setStage] = useState<'study' | 'decision' | 'quiz' | 'manual_interval' | 'completed'>('study');
-  const [studyMode, setStudyMode] = useState<'ai_cards' | 'manual_reader'>('ai_cards');
+  const [studyMode, setStudyMode] = useState<'ai_cards' | 'custom_cards' | 'manual_reader'>('ai_cards');
 
-  // Flashcards state
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
-  const [isCardFlipped, setIsCardFlipped] = useState(false);
+  // AI Flashcards state
+  const [currentAICardIndex, setCurrentAICardIndex] = useState(0);
+  const [isAICardFlipped, setIsAICardFlipped] = useState(false);
+
+  // Custom Deck state
+  const [currentCustomCardIndex, setCurrentCustomCardIndex] = useState(0);
+  const [isCustomCardFlipped, setIsCustomCardFlipped] = useState(false);
+  const [reviewedCustomCount, setReviewedCustomCount] = useState(0);
+
+  // Reader Search state
+  const [readerSearch, setReaderSearch] = useState('');
 
   // AI Quiz state
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -55,42 +72,73 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
   const [isQuizSubmitted, setIsQuizSubmitted] = useState(false);
   const [manualNextDays, setManualNextDays] = useState<number>(7);
 
+  // Reset states on open
+  useEffect(() => {
+    if (isOpen) {
+      setStage('study');
+      setCurrentAICardIndex(0);
+      setIsAICardFlipped(false);
+      setCurrentCustomCardIndex(0);
+      setIsCustomCardFlipped(false);
+      setReviewedCustomCount(0);
+      setCurrentQuestionIndex(0);
+      setSelectedAnswers({});
+      setIsQuizSubmitted(false);
+      setReaderSearch('');
+    }
+  }, [isOpen, revisionItem?.id]);
+
   if (!revisionItem) return null;
 
   // Retrieve target text content
   let targetContent = '';
+  let targetNote: typeof notes[0] | undefined = undefined;
   if (revisionItem.targetType === 'file') {
-    const file = notes.find((n) => n.id === revisionItem.targetId);
-    targetContent = file?.content || '';
+    targetNote = notes.find((n) => n.id === revisionItem.targetId);
+    targetContent = targetNote?.content || '';
   } else {
     // Combine notes in the folder
     const folderDocs = notes.filter((n) => n.folderId === revisionItem.targetId);
-    targetContent = folderDocs.map((d) => d.content).join('\n\n');
+    targetContent = folderDocs.map((d) => `## ${d.title}\n\n${d.content}`).join('\n\n---\n\n');
   }
 
+  // Retrieve custom flashcards linked to this note or subject
+  const linkedCustomCards: Flashcard[] = flashcards.filter((c) => {
+    if (revisionItem.targetType === 'file') {
+      return c.noteId === revisionItem.targetId || (c.subjectId === revisionItem.subjectId && !c.noteId);
+    }
+    return c.subjectId === revisionItem.subjectId;
+  });
+
   // Generate simulated AI Flashcards for this item
-  const sampleCards = [
+  const aiSampleCards = [
     {
-      id: 'c1',
+      id: 'ai_1',
       front: `What is the core principle of ${revisionItem.title.replace(/\.[^/.]+$/, '')}?`,
-      back: 'Guarantees state consistency and high availability through deterministic quorum consensus.',
-      hint: 'Think about active replicas and consensus protocols.',
+      back: 'Guarantees state consistency, active recall retention, and fault tolerance through quorum consensus and structured invariants.',
+      hint: 'Think about foundational axioms, active replicas, and consensus state machines.',
     },
     {
-      id: 'c2',
-      front: 'What are the main edge cases and failure recovery mechanisms?',
-      back: 'Heartbeat timeouts trigger leader reelection while uncommitted log entries are cleanly overwritten.',
-      hint: 'Refer to election timeouts and log matching invariants.',
+      id: 'ai_2',
+      front: `What are the primary failure recovery and edge case behaviors in ${revisionItem.title.replace(/\.[^/.]+$/, '')}?`,
+      back: 'Heartbeat timeouts trigger leader election cycles while uncommitted log entries are cleanly overwritten to prevent split-brain states.',
+      hint: 'Refer to election timeouts, log matching properties, and term synchronization.',
     },
     {
-      id: 'c3',
-      front: 'What trade-offs are made between latency and data consistency?',
-      back: 'Requires majority (N/2 + 1) node confirmations before confirming writes to clients.',
-      hint: 'Quorum write verification model.',
+      id: 'ai_3',
+      front: 'What trade-offs exist between latency, throughput, and consistency?',
+      back: 'Requires majority (N/2 + 1) node confirmations before acknowledging client transactions to preserve linearizability.',
+      hint: 'Quorum verification and CAP theorem trade-offs.',
+    },
+    {
+      id: 'ai_4',
+      front: 'How can active recall and spaced repetition strengthen long-term retention of this topic?',
+      back: 'Retrieval practice interrupts the Ebbinghaus forgetting curve, increasing synapse strength and neural pathway consolidation.',
+      hint: 'SuperMemo SM-2 interval expansion algorithm.',
     },
   ];
 
-  // Generate 3 AI Quiz Questions
+  // Generate AI Quiz Questions
   const quizQuestions: AIQuizQuestion[] = [
     {
       id: 'q1',
@@ -106,7 +154,7 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
     },
     {
       id: 'q2',
-      question: 'What occurs when an active heartbeat timeout is reached?',
+      question: 'What occurs when an active heartbeat timeout is reached in distributed systems?',
       options: [
         'All cluster nodes shut down safely',
         'Follower transitions to Candidate state and increments term counter',
@@ -118,7 +166,7 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
     },
     {
       id: 'q3',
-      question: 'Why are randomized election timeouts critical for stability?',
+      question: 'Why are randomized election timeouts critical for cluster stability?',
       options: [
         'To reduce network bandwidth consumption',
         'To prevent split votes and multiple candidates competing indefinitely',
@@ -130,7 +178,6 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
     },
   ];
 
-  // Calculate Quiz Score
   const calculateScore = () => {
     let correct = 0;
     quizQuestions.forEach((q, idx) => {
@@ -159,7 +206,41 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
     setStage('completed');
   };
 
-  const currentCard = sampleCards[currentCardIndex];
+  const handleRateCustomCard = (rating: ReviewRating) => {
+    if (!linkedCustomCards[currentCustomCardIndex]) return;
+    reviewFlashcard(linkedCustomCards[currentCustomCardIndex].id, rating);
+    setReviewedCustomCount((prev) => prev + 1);
+
+    if (currentCustomCardIndex < linkedCustomCards.length - 1) {
+      setCurrentCustomCardIndex((prev) => prev + 1);
+      setIsCustomCardFlipped(false);
+    } else {
+      setIsCustomCardFlipped(false);
+    }
+  };
+
+  const currentAICard = aiSampleCards[currentAICardIndex];
+  const currentCustomCard = linkedCustomCards[currentCustomCardIndex];
+
+  const handleFollowNotesRedirect = () => {
+    onClose();
+    if (revisionItem.targetType === 'file') {
+      navigate(`/notes?note=${revisionItem.targetId}`);
+    } else if (revisionItem.targetType === 'folder') {
+      const subQuery = revisionItem.subjectId ? `&subject=${revisionItem.subjectId}` : '';
+      navigate(`/notes?folder=${revisionItem.targetId}${subQuery}`);
+    } else if (revisionItem.targetType === 'subject') {
+      navigate(`/notes?subject=${revisionItem.subjectId}`);
+    } else {
+      navigate('/notes');
+    }
+  };
+
+  const handleQuickMarkComplete = () => {
+    const nextDays = revisionItem.intervalDays ? Math.max(1, Math.round(revisionItem.intervalDays * 2)) : 3;
+    completeRevision(revisionItem.id, nextDays);
+    setStage('completed');
+  };
 
   return (
     <Modal
@@ -170,22 +251,37 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
       maxWidth="max-w-3xl"
     >
       <div className="space-y-4">
-        {/* STAGE 1: STUDY SESSION (AI Flashcards or Manual Reader) */}
+        {/* ========================================================================= */}
+        {/* STAGE 1: STUDY SESSION (3 Intuitive Navigation Modes)                     */}
+        {/* ========================================================================= */}
         {stage === 'study' && (
           <div className="space-y-4">
-            {/* Mode Switcher Pill */}
+            {/* Mode Switcher Tabs: AI Cards, Custom Deck, Follow Notes */}
             <div className="flex items-center gap-1 p-1 bg-slate-950 border border-slate-800 rounded-2xl">
               <button
                 type="button"
                 onClick={() => setStudyMode('ai_cards')}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
                   studyMode === 'ai_cards'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-indigo-600 text-white shadow-sm font-bold'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Wand2 className="w-3.5 h-3.5" />
-                <span>AI-Generated Flashcards Mode</span>
+                <Wand2 className="w-3.5 h-3.5 text-purple-300" />
+                <span>AI Recall Cards ({aiSampleCards.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStudyMode('custom_cards')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
+                  studyMode === 'custom_cards'
+                    ? 'bg-indigo-600 text-white shadow-sm font-bold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-amber-300" />
+                <span>My Cards ({linkedCustomCards.length})</span>
               </button>
 
               <button
@@ -193,35 +289,39 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
                 onClick={() => setStudyMode('manual_reader')}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
                   studyMode === 'manual_reader'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-indigo-600 text-white shadow-sm font-bold'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Manual Document Reader</span>
+                <FileText className="w-3.5 h-3.5 text-blue-300" />
+                <span>Follow My Notes</span>
               </button>
             </div>
 
-            {/* Option 1: AI Flashcards */}
+            {/* --------------------------------------------------------------------- */}
+            {/* OPTION 1: AI ACTIVE RECALL CARDS                                      */}
+            {/* --------------------------------------------------------------------- */}
             {studyMode === 'ai_cards' && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-                  <span>Card {currentCardIndex + 1} of {sampleCards.length}</span>
+                  <span className="font-semibold text-slate-300">
+                    AI Concept {currentAICardIndex + 1} of {aiSampleCards.length}
+                  </span>
                   <button
                     type="button"
-                    onClick={() => setIsCardFlipped(!isCardFlipped)}
+                    onClick={() => setIsAICardFlipped(!isAICardFlipped)}
                     className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-semibold"
                   >
                     <RotateCw className="w-3.5 h-3.5" />
-                    <span>Flip Card</span>
+                    <span>Flip Card (Space)</span>
                   </button>
                 </div>
 
                 {/* 3D Flip Card */}
                 <div
-                  onClick={() => setIsCardFlipped(!isCardFlipped)}
-                  className={`w-full min-h-[180px] p-6 rounded-3xl border cursor-pointer transition-all duration-500 shadow-2xl flex flex-col justify-between ${
-                    isCardFlipped
+                  onClick={() => setIsAICardFlipped(!isAICardFlipped)}
+                  className={`w-full min-h-[190px] p-6 rounded-3xl border cursor-pointer transition-all duration-500 shadow-2xl flex flex-col justify-between select-none ${
+                    isAICardFlipped
                       ? 'bg-gradient-to-br from-purple-950/80 via-slate-900 to-indigo-950/80 border-purple-500/50 shadow-purple-500/10'
                       : 'bg-gradient-to-br from-slate-900 via-indigo-950/50 to-slate-900 border-indigo-500/40 shadow-indigo-500/10'
                   }`}
@@ -229,52 +329,64 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
                   <div className="flex items-center justify-between text-[11px] font-bold">
                     <span
                       className={`px-2.5 py-0.5 rounded-full ${
-                        isCardFlipped
+                        isAICardFlipped
                           ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
                           : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
                       }`}
                     >
-                      {isCardFlipped ? 'ANSWER / CONCEPT' : 'QUESTION / PROMPT'}
+                      {isAICardFlipped ? 'ANSWER / SYNTHESIS' : 'AI ACTIVE RECALL PROMPT'}
                     </span>
                     <span className="text-slate-500 text-[10px]">Click anywhere to flip 🔄</span>
                   </div>
 
                   <div className="my-4 text-center">
                     <p className="text-base sm:text-lg font-bold text-slate-100 leading-relaxed">
-                      {isCardFlipped ? currentCard.back : currentCard.front}
+                      {isAICardFlipped ? currentAICard.back : currentAICard.front}
                     </p>
-                    {currentCard.hint && !isCardFlipped && (
-                      <p className="text-xs text-amber-400 mt-2 italic">💡 Hint: {currentCard.hint}</p>
+                    {currentAICard.hint && !isAICardFlipped && (
+                      <p className="text-xs text-amber-400 mt-2 italic">💡 Hint: {currentAICard.hint}</p>
                     )}
                   </div>
 
-                  <div className="text-[10px] text-slate-500 text-right">
-                    Active Recall Revision
+                  <div className="flex items-center justify-between text-[10px] text-slate-500">
+                    <span>Topic: {revisionItem.title}</span>
+                    <span>AI Spaced Repetition Engine</span>
                   </div>
                 </div>
 
-                {/* Card Nav Controls */}
+                {/* Navigation Controls */}
                 <div className="flex items-center justify-between">
                   <button
                     type="button"
-                    disabled={currentCardIndex === 0}
+                    disabled={currentAICardIndex === 0}
                     onClick={() => {
-                      setCurrentCardIndex((prev) => Math.max(0, prev - 1));
-                      setIsCardFlipped(false);
+                      setCurrentAICardIndex((prev) => Math.max(0, prev - 1));
+                      setIsAICardFlipped(false);
                     }}
-                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-300 text-xs font-semibold flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" /> Previous
                   </button>
 
+                  <div className="flex items-center gap-1.5">
+                    {aiSampleCards.map((_, idx) => (
+                      <div
+                        key={idx}
+                        className={`w-2 h-2 rounded-full transition-all ${
+                          idx === currentAICardIndex ? 'bg-indigo-400 w-4' : 'bg-slate-700'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
                   <button
                     type="button"
-                    disabled={currentCardIndex === sampleCards.length - 1}
+                    disabled={currentAICardIndex === aiSampleCards.length - 1}
                     onClick={() => {
-                      setCurrentCardIndex((prev) => Math.min(sampleCards.length - 1, prev + 1));
-                      setIsCardFlipped(false);
+                      setCurrentAICardIndex((prev) => Math.min(aiSampleCards.length - 1, prev + 1));
+                      setIsAICardFlipped(false);
                     }}
-                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-300 text-xs font-semibold flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
                   >
                     Next Card <ArrowRight className="w-3.5 h-3.5" />
                   </button>
@@ -282,42 +394,237 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
               </div>
             )}
 
-            {/* Option 2: Manual Reader */}
+            {/* --------------------------------------------------------------------- */}
+            {/* OPTION 2: MY CUSTOM FLASHCARD DECK (SM-2 Rating Support)              */}
+            {/* --------------------------------------------------------------------- */}
+            {studyMode === 'custom_cards' && (
+              <div className="space-y-4">
+                {linkedCustomCards.length === 0 ? (
+                  <div className="p-8 rounded-3xl bg-slate-950/80 border border-slate-800 text-center space-y-3">
+                    <Sparkles className="w-8 h-8 text-amber-400 mx-auto opacity-80" />
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-200">No custom flashcards created for this note yet</h4>
+                      <p className="text-xs text-slate-400 mt-1">
+                        You can generate instant AI flashcards, or create cards directly from your notes using <code className="text-indigo-300 bg-slate-900 px-1 py-0.5 rounded">Question :: Answer</code> syntax.
+                      </p>
+                    </div>
+                    {onOpenAIGenerator && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onOpenAIGenerator(revisionItem.subjectId, revisionItem.targetType === 'file' ? revisionItem.targetId : undefined);
+                        }}
+                        className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 transition-all inline-flex items-center gap-2"
+                      >
+                        <Wand2 className="w-4 h-4" /> Generate AI Cards Now
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                      <span>Card {currentCustomCardIndex + 1} of {linkedCustomCards.length}</span>
+                      <span className="text-[11px] text-emerald-400 font-mono">
+                        Reviewed: {reviewedCustomCount}/{linkedCustomCards.length}
+                      </span>
+                    </div>
+
+                    {/* Custom 3D Flip Card */}
+                    <div
+                      onClick={() => setIsCustomCardFlipped(!isCustomCardFlipped)}
+                      className={`w-full min-h-[190px] p-6 rounded-3xl border cursor-pointer transition-all duration-500 shadow-2xl flex flex-col justify-between select-none ${
+                        isCustomCardFlipped
+                          ? 'bg-gradient-to-br from-emerald-950/80 via-slate-900 to-indigo-950/80 border-emerald-500/50 shadow-emerald-500/10'
+                          : 'bg-gradient-to-br from-slate-900 via-indigo-950/50 to-slate-900 border-indigo-500/40 shadow-indigo-500/10'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-[11px] font-bold">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full ${
+                            isCustomCardFlipped
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                          }`}
+                        >
+                          {isCustomCardFlipped ? 'BACK (ANSWER)' : 'FRONT (QUESTION)'}
+                        </span>
+                        <span className="text-slate-500 text-[10px]">Click to flip 🔄</span>
+                      </div>
+
+                      <div className="my-4 text-center">
+                        <p className="text-base sm:text-lg font-bold text-slate-100 leading-relaxed">
+                          {isCustomCardFlipped ? currentCustomCard.back : currentCustomCard.front}
+                        </p>
+                        {currentCustomCard.hint && !isCustomCardFlipped && (
+                          <p className="text-xs text-amber-400 mt-2 italic">💡 Hint: {currentCustomCard.hint}</p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-slate-500">
+                        <span>Status: <strong className="text-slate-300 capitalize">{currentCustomCard.status}</strong></span>
+                        <span>Due: {currentCustomCard.nextReviewDate}</span>
+                      </div>
+                    </div>
+
+                    {/* SM-2 Recall Rating Feedback Buttons (Visible when flipped) */}
+                    {isCustomCardFlipped ? (
+                      <div className="space-y-1.5 pt-1">
+                        <p className="text-[11px] text-slate-400 text-center font-semibold">
+                          How well did you remember this? (SM-2 Recall Rating):
+                        </p>
+                        <div className="grid grid-cols-4 gap-2">
+                          {[
+                            { rating: 0 as ReviewRating, label: 'Again', desc: '< 1d', color: 'bg-red-950/80 hover:bg-red-900 text-red-300 border-red-800' },
+                            { rating: 3 as ReviewRating, label: 'Hard', desc: '1-2d', color: 'bg-amber-950/80 hover:bg-amber-900 text-amber-300 border-amber-800' },
+                            { rating: 4 as ReviewRating, label: 'Good', desc: '4-7d', color: 'bg-blue-950/80 hover:bg-blue-900 text-blue-300 border-blue-800' },
+                            { rating: 5 as ReviewRating, label: 'Easy', desc: '14d+', color: 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border-emerald-800' },
+                          ].map((btn) => (
+                            <button
+                              key={btn.label}
+                              type="button"
+                              onClick={() => handleRateCustomCard(btn.rating)}
+                              className={`p-2 rounded-xl border text-center font-bold text-xs transition-all ${btn.color}`}
+                            >
+                              <div>{btn.label}</div>
+                              <div className="text-[10px] opacity-75 font-normal">{btn.desc}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <button
+                          type="button"
+                          disabled={currentCustomCardIndex === 0}
+                          onClick={() => {
+                            setCurrentCustomCardIndex((prev) => Math.max(0, prev - 1));
+                            setIsCustomCardFlipped(false);
+                          }}
+                          className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-300 text-xs font-semibold flex items-center gap-1.5"
+                        >
+                          <ArrowLeft className="w-3.5 h-3.5" /> Previous
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsCustomCardFlipped(true)}
+                          className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-sm"
+                        >
+                          Show Answer
+                        </button>
+                        <button
+                          type="button"
+                          disabled={currentCustomCardIndex === linkedCustomCards.length - 1}
+                          onClick={() => {
+                            setCurrentCustomCardIndex((prev) => Math.min(linkedCustomCards.length - 1, prev + 1));
+                            setIsCustomCardFlipped(false);
+                          }}
+                          className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-300 text-xs font-semibold flex items-center gap-1.5"
+                        >
+                          Next <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* --------------------------------------------------------------------- */}
+            {/* OPTION 3: FOLLOW MY NOTES (Full Document Reader with Search & Redirect) */}
+            {/* --------------------------------------------------------------------- */}
             {studyMode === 'manual_reader' && (
               <div className="space-y-3">
-                <div className="p-6 rounded-3xl bg-slate-950/90 border border-slate-800 max-h-[300px] overflow-y-auto space-y-3 text-slate-100 text-sm leading-relaxed prose prose-invert max-w-none">
-                  <div
-                    dangerouslySetInnerHTML={{
-                      __html: markdownToFormattedHtml(targetContent),
-                    }}
+                {/* Redirect Banner to Notes Workspace */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 p-3.5 bg-gradient-to-r from-indigo-950/60 via-purple-950/40 to-slate-900 border border-indigo-500/40 rounded-2xl text-xs shadow-md">
+                  <div className="flex items-center gap-2.5 text-slate-200 min-w-0">
+                    <BookOpen className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-bold text-white truncate">
+                        Follow & Edit in Notes Workspace: {revisionItem.title}
+                      </p>
+                      <p className="text-[11px] text-slate-400 truncate">
+                        Jump directly into the full folder and document editor
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleFollowNotesRedirect}
+                    className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 active:scale-95 transition-all"
+                  >
+                    <span>Open in Notes</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* In-Note Search Bar */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Search keywords in note content..."
+                    value={readerSearch}
+                    onChange={(e) => setReaderSearch(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                   />
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
+                </div>
+
+                {/* Formatted Note Content Box */}
+                <div className="p-6 rounded-3xl bg-slate-950/90 border border-slate-800 max-h-[300px] overflow-y-auto space-y-3 text-slate-100 text-sm leading-relaxed prose prose-invert max-w-none shadow-inner">
+                  {targetContent.trim() ? (
+                    <div
+                      dangerouslySetInnerHTML={{
+                        __html: markdownToFormattedHtml(targetContent),
+                      }}
+                    />
+                  ) : (
+                    <div className="text-center py-8 text-slate-500 text-xs italic">
+                      (This note is currently empty)
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* Completion Trigger */}
-            <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
+            {/* Completion Trigger Bar */}
+            <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
               >
                 Exit
               </button>
 
-              <button
-                type="button"
-                onClick={() => setStage('decision')}
-                className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-emerald-600/30 flex items-center gap-2 transition-all active:scale-95"
-              >
-                <Check className="w-4 h-4" />
-                <span>I Have Revised This</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleQuickMarkComplete}
+                  className="px-4 py-2 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                  title="Mark this revision as complete and advance the spaced repetition interval"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>Mark as Complete</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStage('decision')}
+                  className="px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 transition-all active:scale-95"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Test Recall / Finish</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
 
-        {/* STAGE 2: DECISION PROMPT (AI Quiz vs Manual Interval) */}
+        {/* ========================================================================= */}
+        {/* STAGE 2: DECISION PROMPT (AI Quiz vs Manual Interval)                     */}
+        {/* ========================================================================= */}
         {stage === 'decision' && (
           <div className="space-y-5 p-2 animate-fade-in text-center">
             <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center mx-auto text-indigo-400">
@@ -348,180 +655,154 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
                     AI tests your recall and calculates the scientifically optimal next revision date based on your score.
                   </p>
                 </div>
-                <span className="text-[11px] text-indigo-400 font-semibold flex items-center gap-1">
-                  Start AI Quiz →
-                </span>
               </div>
 
-              {/* Option B: Manual Next Interval */}
+              {/* Option B: Set Interval Manually */}
               <div
                 onClick={() => setStage('manual_interval')}
-                className="glass-panel p-5 rounded-2xl border border-slate-800 hover:border-slate-700 cursor-pointer transition-all hover:scale-[1.02] space-y-3 text-left group"
+                className="glass-panel p-5 rounded-2xl border border-slate-800 hover:border-slate-600 cursor-pointer transition-all hover:scale-[1.02] space-y-3 text-left group bg-slate-900/60"
               >
                 <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-slate-300 font-bold">
                   <Calendar className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-slate-100 group-hover:text-slate-300 text-sm">
-                    Set Schedule Manually
+                  <h4 className="font-bold text-slate-100 group-hover:text-white text-sm">
+                    Set Custom Interval Manually
                   </h4>
                   <p className="text-xs text-slate-400 mt-1">
-                    Choose when you want to revise next without taking an evaluation quiz.
+                    Choose your own next review date (e.g. 3 days, 1 week, 2 weeks) without taking a quiz.
                   </p>
                 </div>
-                <span className="text-[11px] text-slate-400 font-semibold flex items-center gap-1">
-                  Choose Date →
-                </span>
               </div>
             </div>
           </div>
         )}
 
-        {/* STAGE 3A: AI QUIZ */}
+        {/* ========================================================================= */}
+        {/* STAGE 3A: AI QUIZ ASSESSMENT                                              */}
+        {/* ========================================================================= */}
         {stage === 'quiz' && (
           <div className="space-y-4 animate-fade-in">
-            {!isQuizSubmitted ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between text-xs text-slate-400">
-                  <span className="font-bold text-indigo-300">
-                    Question {currentQuestionIndex + 1} of {quizQuestions.length}
-                  </span>
-                  <span>AI Retention Quiz</span>
-                </div>
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span className="font-semibold text-slate-300">
+                Question {currentQuestionIndex + 1} of {quizQuestions.length}
+              </span>
+              <span>AI Active Recall Test</span>
+            </div>
 
-                {/* Current Question */}
-                <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-                  <h4 className="text-sm sm:text-base font-bold text-white">
-                    {quizQuestions[currentQuestionIndex].question}
-                  </h4>
+            {/* Question Card */}
+            <div className="p-5 rounded-3xl bg-slate-950 border border-indigo-500/30 space-y-4 shadow-xl">
+              <h4 className="text-sm font-bold text-slate-100 leading-relaxed">
+                {quizQuestions[currentQuestionIndex].question}
+              </h4>
 
-                  <div className="space-y-2 pt-1">
-                    {quizQuestions[currentQuestionIndex].options.map((opt, optIdx) => {
-                      const isSelected = selectedAnswers[currentQuestionIndex] === optIdx;
-                      return (
-                        <button
-                          key={optIdx}
-                          type="button"
-                          onClick={() =>
-                            setSelectedAnswers((prev) => ({
-                              ...prev,
-                              [currentQuestionIndex]: optIdx,
-                            }))
-                          }
-                          className={`w-full text-left p-3 rounded-xl border text-xs font-semibold transition-all flex items-center gap-2.5 ${
-                            isSelected
-                              ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
-                              : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:bg-slate-800'
-                          }`}
-                        >
-                          <span className="w-5 h-5 rounded-full bg-black/30 flex items-center justify-center text-[10px] font-bold">
-                            {String.fromCharCode(65 + optIdx)}
-                          </span>
-                          <span>{opt}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+              <div className="space-y-2">
+                {quizQuestions[currentQuestionIndex].options.map((opt, oIdx) => {
+                  const isSelected = selectedAnswers[currentQuestionIndex] === oIdx;
+                  const isCorrect = oIdx === quizQuestions[currentQuestionIndex].correctIndex;
+                  let optStyle = 'border-slate-800 bg-slate-900/60 text-slate-300 hover:bg-slate-800/80';
 
-                {/* Nav & Submit */}
-                <div className="flex items-center justify-between pt-2">
-                  <button
-                    type="button"
-                    disabled={currentQuestionIndex === 0}
-                    onClick={() => setCurrentQuestionIndex((prev) => Math.max(0, prev - 1))}
-                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-300 text-xs font-semibold"
-                  >
-                    Previous Question
-                  </button>
+                  if (isQuizSubmitted) {
+                    if (isCorrect) {
+                      optStyle = 'border-emerald-500 bg-emerald-950/50 text-emerald-200 font-bold';
+                    } else if (isSelected) {
+                      optStyle = 'border-red-500 bg-red-950/50 text-red-200';
+                    }
+                  } else if (isSelected) {
+                    optStyle = 'border-indigo-500 bg-indigo-950/60 text-indigo-200 font-semibold';
+                  }
 
-                  {currentQuestionIndex < quizQuestions.length - 1 ? (
-                    <button
-                      type="button"
-                      disabled={selectedAnswers[currentQuestionIndex] === undefined}
-                      onClick={() => setCurrentQuestionIndex((prev) => prev + 1)}
-                      className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-bold flex items-center gap-1.5"
+                  return (
+                    <div
+                      key={oIdx}
+                      onClick={() => {
+                        if (!isQuizSubmitted) {
+                          setSelectedAnswers((prev) => ({ ...prev, [currentQuestionIndex]: oIdx }));
+                        }
+                      }}
+                      className={`p-3 rounded-2xl border text-xs cursor-pointer transition-all flex items-center justify-between ${optStyle}`}
                     >
-                      Next Question <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={Object.keys(selectedAnswers).length < quizQuestions.length}
-                      onClick={() => setIsQuizSubmitted(true)}
-                      className="px-6 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white text-xs font-bold rounded-xl shadow-lg"
-                    >
-                      Submit &amp; Calculate Next Interval
-                    </button>
-                  )}
-                </div>
+                      <span>{opt}</span>
+                      {isQuizSubmitted && isCorrect && <Check className="w-4 h-4 text-emerald-400" />}
+                    </div>
+                  );
+                })}
               </div>
-            ) : (
-              /* Quiz Score & AI Interval Calculation Result */
-              <div className="p-6 rounded-3xl bg-slate-950 border border-indigo-500/40 text-center space-y-4">
-                <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center mx-auto text-indigo-400">
-                  <Award className="w-7 h-7" />
-                </div>
 
-                <div className="space-y-1">
-                  <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">
-                    Quiz Evaluation Complete
+              {/* Explanation after submit */}
+              {isQuizSubmitted && (
+                <div className="p-3 rounded-2xl bg-indigo-950/40 border border-indigo-500/20 text-xs text-indigo-300 space-y-1">
+                  <span className="font-bold flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" /> Explanation:
                   </span>
-                  <h3 className="text-2xl font-bold text-white">
-                    Score: {calculateScore()} / {quizQuestions.length} ({Math.round((calculateScore() / quizQuestions.length) * 100)}%)
-                  </h3>
+                  <p>{quizQuestions[currentQuestionIndex].explanation}</p>
                 </div>
+              )}
+            </div>
 
-                <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 text-xs text-slate-200 max-w-md mx-auto space-y-1">
-                  <p className="font-bold text-indigo-300">
-                    🧠 AI Spaced Repetition Recommendation:
-                  </p>
-                  <p>
-                    {getRecommendedInterval(calculateScore(), quizQuestions.length).label}
-                  </p>
-                  <p className="text-[11px] text-slate-400">
-                    Timer &amp; Email reminder will be scheduled for this new date.
-                  </p>
-                </div>
+            {/* Quiz Nav Buttons */}
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                disabled={currentQuestionIndex === 0}
+                onClick={() => setCurrentQuestionIndex((prev) => Math.max(0, prev - 1))}
+                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-300 text-xs font-semibold flex items-center gap-1"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" /> Previous
+              </button>
 
+              {currentQuestionIndex < quizQuestions.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={() => setCurrentQuestionIndex((prev) => Math.min(quizQuestions.length - 1, prev + 1))}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1 shadow-sm"
+                >
+                  Next <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              ) : !isQuizSubmitted ? (
+                <button
+                  type="button"
+                  disabled={Object.keys(selectedAnswers).length < quizQuestions.length}
+                  onClick={() => setIsQuizSubmitted(true)}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center gap-1.5"
+                >
+                  <Award className="w-4 h-4" /> Submit Quiz
+                </button>
+              ) : (
                 <button
                   type="button"
                   onClick={handleFinishWithQuizScore}
-                  className="px-8 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 active:scale-95 transition-all"
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 flex items-center gap-1.5"
                 >
-                  Accept AI Interval &amp; Save Schedule
+                  <Check className="w-4 h-4" /> Save Score & Next Schedule
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 
-        {/* STAGE 3B: MANUAL NEXT INTERVAL */}
+        {/* ========================================================================= */}
+        {/* STAGE 3B: MANUAL NEXT INTERVAL                                            */}
+        {/* ========================================================================= */}
         {stage === 'manual_interval' && (
-          <div className="space-y-4 animate-fade-in">
-            <div className="text-center space-y-1">
-              <h4 className="text-base font-bold text-white">Choose Next Revision Timer</h4>
-              <p className="text-xs text-slate-400">
-                Pick how many days until this folder/file is due for review again.
-              </p>
-            </div>
+          <div className="space-y-4 animate-fade-in text-center p-2 max-w-md mx-auto">
+            <h4 className="text-sm font-bold text-white">Select next revision interval:</h4>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 max-w-lg mx-auto pt-2">
+            <div className="grid grid-cols-2 gap-2">
               {[
-                { label: '1 Day', days: 1 },
                 { label: '3 Days', days: 3 },
-                { label: '7 Days (1 Wk)', days: 7 },
-                { label: '14 Days (2 Wk)', days: 14 },
-                { label: '30 Days (1 Mo)', days: 30 },
+                { label: '7 Days (1 Week)', days: 7 },
+                { label: '14 Days (2 Weeks)', days: 14 },
+                { label: '30 Days (1 Month)', days: 30 },
               ].map((item) => (
                 <button
                   key={item.days}
                   type="button"
                   onClick={() => setManualNextDays(item.days)}
-                  className={`py-2.5 rounded-xl border text-xs font-bold transition-all ${
+                  className={`p-3 rounded-2xl border text-xs font-bold transition-all ${
                     manualNextDays === item.days
                       ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                      : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-900'
                   }`}
                 >
                   {item.label}
@@ -529,45 +810,39 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
               ))}
             </div>
 
-            <div className="flex items-center justify-center gap-3 pt-3">
-              <button
-                type="button"
-                onClick={() => setStage('decision')}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                onClick={handleFinishWithManualInterval}
-                className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md"
-              >
-                Save {manualNextDays}-Day Interval
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleFinishWithManualInterval}
+              className="w-full py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all active:scale-95 mt-4"
+            >
+              <Check className="w-4 h-4" />
+              <span>Confirm {manualNextDays}-Day Interval</span>
+            </button>
           </div>
         )}
 
-        {/* STAGE 4: COMPLETED CONFIRMATION */}
+        {/* ========================================================================= */}
+        {/* STAGE 4: COMPLETED SUMMARY                                                */}
+        {/* ========================================================================= */}
         {stage === 'completed' && (
-          <div className="p-8 rounded-3xl bg-slate-950 border border-emerald-500/40 text-center space-y-4 animate-fade-in">
-            <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto text-emerald-400">
+          <div className="space-y-4 text-center py-6 animate-fade-in">
+            <div className="w-16 h-16 rounded-3xl bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
               <CheckCircle2 className="w-8 h-8" />
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-xl font-bold text-white">Revision Recorded Successfully!</h3>
-              <p className="text-xs text-slate-300">
-                Your schedule for <strong>{revisionItem.title}</strong> has been updated. An email alert will be sent when the timer expires.
+              <h3 className="text-lg font-bold text-white">Revision Successfully Completed!</h3>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                Your spaced repetition schedule and SM-2 memory parameters have been updated for <strong>{revisionItem.title}</strong>.
               </p>
             </div>
 
             <button
               type="button"
               onClick={onClose}
-              className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl"
+              className="px-8 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition-all active:scale-95"
             >
-              Done &amp; Close
+              Back to Workspace
             </button>
           </div>
         )}

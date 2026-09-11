@@ -23,6 +23,9 @@ import {
   FileText,
   Highlighter,
   Download,
+  Calendar,
+  Wand2,
+  Zap,
 } from 'lucide-react';
 
 import { markdownToFormattedHtml } from '../../utils/textFormatter';
@@ -30,11 +33,17 @@ import { markdownToFormattedHtml } from '../../utils/textFormatter';
 interface RichDocumentEditorProps {
   note: NoteDocument;
   onBackToFolder?: () => void;
+  onOpenScheduleModal?: (noteId: string, subjectId?: string) => void;
+  onOpenAIGenerator?: (subjectId?: string, noteId?: string) => void;
+  onStartActiveRevision?: (noteId: string, folderId?: string, subjectId?: string, title?: string) => void;
 }
 
 export const RichDocumentEditor: React.FC<RichDocumentEditorProps> = ({
   note,
   onBackToFolder,
+  onOpenScheduleModal,
+  onOpenAIGenerator,
+  onStartActiveRevision,
 }) => {
   const { updateNoteContent, deleteNote, subjects, folders } = useApp();
 
@@ -231,6 +240,46 @@ export const RichDocumentEditor: React.FC<RichDocumentEditorProps> = ({
           >
             {isSaved ? '✓ Saved' : '● Saving...'}
           </span>
+
+          <div className="h-4 w-px bg-slate-800 mx-0.5 hidden sm:block" />
+
+          {/* Revision & Spaced Repetition Actions */}
+          <button
+            type="button"
+            onClick={() => onOpenScheduleModal?.(note.id, subjectId || note.subjectId)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/40 text-slate-300 hover:text-indigo-300 text-xs font-semibold transition-all"
+            title="Set Custom Spaced Repetition Schedule"
+          >
+            <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden md:inline">Schedule</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onOpenAIGenerator?.(subjectId || note.subjectId, note.id)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/30 text-purple-200 text-xs font-bold transition-all shadow-sm"
+            title="Generate AI Flashcards from this note"
+          >
+            <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+            <span>AI Cards</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              onStartActiveRevision?.(
+                note.id,
+                folderId || note.folderId,
+                subjectId || note.subjectId,
+                fileName || note.title
+              )
+            }
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all active:scale-95"
+            title="Launch Active Recall Session for this note"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>Revise Now</span>
+          </button>
 
           {/* Download Text File */}
           <button

@@ -36,6 +36,10 @@ import {
   FileSpreadsheet,
   BookOpen,
   GraduationCap,
+  Wand2,
+  Brain,
+  Zap,
+  Sparkles,
 } from 'lucide-react';
 
 interface FolderContentsViewProps {
@@ -48,6 +52,9 @@ interface FolderContentsViewProps {
   onNavigateSubject?: (subjectId: string | null) => void;
   onOpenCreateFolderModal?: (subjectId?: string, parentId?: string | null) => void;
   onOpenCreateSubjectModal?: () => void;
+  onOpenScheduleModal?: (item: SelectedItem) => void;
+  onOpenAIGenerator?: (subjectId?: string, noteId?: string) => void;
+  onStartActiveRevision?: (noteId?: string, folderId?: string, subjectId?: string, title?: string) => void;
 }
 
 export interface DirectoryItem {
@@ -76,6 +83,9 @@ export const FolderContentsView: React.FC<FolderContentsViewProps> = ({
   onNavigateSubject,
   onOpenCreateFolderModal,
   onOpenCreateSubjectModal,
+  onOpenScheduleModal,
+  onOpenAIGenerator,
+  onStartActiveRevision,
 }) => {
   const {
     notes,
@@ -497,8 +507,12 @@ export const FolderContentsView: React.FC<FolderContentsViewProps> = ({
     }
   };
 
-  // Schedule Revision
+  // Revision & Flashcards Triggers
   const handleScheduleRevision = (item: SelectedItem) => {
+    if (onOpenScheduleModal) {
+      onOpenScheduleModal(item);
+      return;
+    }
     const name =
       item.type === 'directory'
         ? item.data.name
@@ -519,6 +533,30 @@ export const FolderContentsView: React.FC<FolderContentsViewProps> = ({
       emailReminder: false,
     });
     showToast(`"${name}" scheduled for Smart Active Recall!`);
+  };
+
+  const handleLaunchAIGenerator = (item?: SelectedItem | null) => {
+    if (!onOpenAIGenerator) return;
+    if (item && item.type === 'note') {
+      onOpenAIGenerator(item.data.subjectId || currentSubject?.id, item.data.id);
+    } else if (item && item.type === 'directory') {
+      onOpenAIGenerator(item.data.isSubject ? item.data.id : (item.data.rawFolder?.subjectId || currentSubject?.id));
+    } else {
+      onOpenAIGenerator(currentSubject?.id, undefined);
+    }
+  };
+
+  const handleLaunchActiveRevision = (item?: SelectedItem | null) => {
+    if (!onStartActiveRevision) return;
+    if (item && item.type === 'note') {
+      onStartActiveRevision(item.data.id, item.data.folderId, item.data.subjectId || currentSubject?.id, item.data.title);
+    } else if (item && item.type === 'directory') {
+      onStartActiveRevision(undefined, item.data.isSubject ? undefined : item.data.id, item.data.isSubject ? item.data.id : item.data.rawFolder?.subjectId, item.data.name);
+    } else if (currentFolder) {
+      onStartActiveRevision(undefined, currentFolder.id, currentSubject?.id, currentFolder.name);
+    } else if (currentSubject) {
+      onStartActiveRevision(undefined, undefined, currentSubject.id, currentSubject.name);
+    }
   };
 
   // Breadcrumb Path Construction
@@ -801,15 +839,66 @@ export const FolderContentsView: React.FC<FolderContentsViewProps> = ({
               <span>Delete</span>
             </button>
 
+            {/* Revision & Spaced Repetition Suite */}
             <button
               type="button"
-              disabled={!selectedItem}
-              onClick={() => selectedItem && handleScheduleRevision(selectedItem)}
+              disabled={!selectedItem && !currentFolder && !currentSubject}
+              onClick={() => {
+                if (selectedItem) {
+                  handleScheduleRevision(selectedItem);
+                } else if (currentFolder) {
+                  onOpenScheduleModal?.({
+                    type: 'directory',
+                    data: {
+                      id: currentFolder.id,
+                      name: currentFolder.name,
+                      createdAt: currentFolder.createdAt,
+                      isSubject: false,
+                      itemCount: 0,
+                      rawFolder: currentFolder,
+                    },
+                  });
+                } else if (currentSubject) {
+                  onOpenScheduleModal?.({
+                    type: 'directory',
+                    data: {
+                      id: currentSubject.id,
+                      name: currentSubject.name,
+                      createdAt: currentSubject.createdAt,
+                      isSubject: true,
+                      itemCount: 0,
+                      rawSubject: currentSubject,
+                    },
+                  });
+                }
+              }}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl hover:bg-slate-800 disabled:opacity-30 text-slate-300 hover:text-indigo-300 font-medium transition-colors"
-              title="Schedule Active Recall Revision"
+              title="Set Custom Revision & Spaced Repetition Schedule"
             >
               <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Schedule Revision</span>
+              <span>Schedule</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!selectedItem && !currentFolder && !currentSubject}
+              onClick={() => handleLaunchAIGenerator(selectedItem)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl hover:bg-purple-950/40 disabled:opacity-30 text-slate-300 hover:text-purple-300 font-medium transition-colors"
+              title="Generate AI Flashcards from selected note or folder"
+            >
+              <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+              <span className="hidden sm:inline">AI Cards</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!selectedItem && !currentFolder && !currentSubject}
+              onClick={() => handleLaunchActiveRevision(selectedItem)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600/20 to-teal-600/20 hover:from-emerald-600/30 hover:to-teal-600/30 border border-emerald-500/30 disabled:opacity-30 text-emerald-300 font-semibold transition-all active:scale-95"
+              title="Launch Active Recall Session right now"
+            >
+              <Zap className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Revise Now</span>
             </button>
 
             {selectedItem && selectedItem.type === 'file' && (
@@ -1516,8 +1605,30 @@ export const FolderContentsView: React.FC<FolderContentsViewProps> = ({
               }}
               className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-blue-600 hover:text-white flex items-center gap-2 text-slate-200"
             >
-              <Calendar className="w-3.5 h-3.5" />
-              <span>Schedule Active Recall</span>
+              <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Schedule Active Recall...</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleLaunchAIGenerator(contextMenu.item);
+                setContextMenu(null);
+              }}
+              className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-purple-600 hover:text-white flex items-center gap-2 text-purple-300"
+            >
+              <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+              <span>Generate AI Flashcards</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleLaunchActiveRevision(contextMenu.item);
+                setContextMenu(null);
+              }}
+              className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-emerald-600 hover:text-white flex items-center gap-2 text-emerald-300"
+            >
+              <Zap className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Revise Now</span>
             </button>
           </div>
 

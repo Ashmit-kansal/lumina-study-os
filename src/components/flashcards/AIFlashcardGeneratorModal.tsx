@@ -22,6 +22,7 @@ interface AIFlashcardGeneratorModalProps {
   isOpen: boolean;
   onClose: () => void;
   defaultSubjectId?: string;
+  defaultNoteId?: string;
 }
 
 interface GeneratedCardCandidate {
@@ -36,12 +37,13 @@ export const AIFlashcardGeneratorModal: React.FC<AIFlashcardGeneratorModalProps>
   isOpen,
   onClose,
   defaultSubjectId,
+  defaultNoteId,
 }) => {
   const { notes, subjects, createFlashcardsBatch, addCustomFlashcard } = useApp();
 
   const [mode, setMode] = useState<'from_note' | 'from_topic' | 'manual'>('from_note');
   const [selectedSubjectId, setSelectedSubjectId] = useState(defaultSubjectId || subjects[0]?.id || '');
-  const [selectedNoteId, setSelectedNoteId] = useState<string>(notes[0]?.id || '');
+  const [selectedNoteId, setSelectedNoteId] = useState<string>(defaultNoteId || notes[0]?.id || '');
   const [topicPrompt, setTopicPrompt] = useState('Distributed Consensus & Raft Protocol');
   const [cardCount, setCardCount] = useState<number>(5);
   const [difficulty, setDifficulty] = useState<'foundational' | 'intermediate' | 'exam_ready'>('exam_ready');
@@ -57,6 +59,22 @@ export const AIFlashcardGeneratorModal: React.FC<AIFlashcardGeneratorModalProps>
   const [manualBack, setManualBack] = useState('');
   const [manualHint, setManualHint] = useState('');
   const [isManualFlipped, setIsManualFlipped] = useState(false);
+
+  // Sync state on open
+  React.useEffect(() => {
+    if (isOpen) {
+      if (defaultSubjectId) setSelectedSubjectId(defaultSubjectId);
+      if (defaultNoteId) {
+        setSelectedNoteId(defaultNoteId);
+        setMode('from_note');
+        const n = notes.find((item) => item.id === defaultNoteId);
+        if (n && n.subjectId) setSelectedSubjectId(n.subjectId);
+      }
+      setIsDone(false);
+      setIsGenerating(false);
+      setGeneratedCandidates([]);
+    }
+  }, [isOpen, defaultSubjectId, defaultNoteId, notes]);
 
   const selectedNote = notes.find((n) => n.id === selectedNoteId);
 

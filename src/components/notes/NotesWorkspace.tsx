@@ -3,10 +3,14 @@ import { useApp } from '../../context/AppContext';
 import { useRouter } from '../../context/RouterContext';
 import { FolderTree } from './FolderTree';
 import { RichDocumentEditor } from './RichDocumentEditor';
-import { FolderContentsView } from './FolderContentsView';
+import { FolderContentsView, SelectedItem } from './FolderContentsView';
 import { CreateFolderModal } from './CreateFolderModal';
 import { CreateSubjectModal } from './CreateSubjectModal';
 import { FileUploadModal } from './FileUploadModal';
+import { SetRevisionScheduleModal } from '../flashcards/SetRevisionScheduleModal';
+import { AIFlashcardGeneratorModal } from '../flashcards/AIFlashcardGeneratorModal';
+import { ActiveRevisionModal } from '../flashcards/ActiveRevisionModal';
+import { RevisionScheduleItem } from '../../types';
 import {
   Sparkles,
   ChevronRight,
@@ -22,6 +26,8 @@ export const NotesWorkspace: React.FC = () => {
     createNote,
     subjects,
     folders,
+    revisionItems,
+    scheduleRevision,
   } = useApp();
 
   const { searchParams, setSearchParam } = useRouter();
@@ -32,21 +38,51 @@ export const NotesWorkspace: React.FC = () => {
   // Main stage view: 'folder_explorer' or 'document_editor'
   const [viewState, setViewState] = useState<'folder_explorer' | 'document_editor'>('folder_explorer');
 
-  // Modals state
+  // Creation Modals state
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
   const [isCreateSubjectOpen, setIsCreateSubjectOpen] = useState(false);
   const [isFileUploadOpen, setIsFileUploadOpen] = useState(false);
   const [modalSubjectId, setModalSubjectId] = useState<string | undefined>(undefined);
   const [modalParentId, setModalParentId] = useState<string | null | undefined>(undefined);
 
-  // Sync active note from URL query param if present
+  // Spaced Repetition & Revision Modals state
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [scheduleModalTarget, setScheduleModalTarget] = useState<{
+    type: 'file' | 'folder' | 'subject';
+    targetId?: string;
+    subjectId?: string;
+  }>({ type: 'file' });
+
+  const [isAIGeneratorOpen, setIsAIGeneratorOpen] = useState(false);
+  const [aiGeneratorSubjectId, setAiGeneratorSubjectId] = useState<string | undefined>(undefined);
+  const [aiGeneratorNoteId, setAiGeneratorNoteId] = useState<string | undefined>(undefined);
+
+  const [isActiveRevisionOpen, setIsActiveRevisionOpen] = useState(false);
+  const [activeRevisionItem, setActiveRevisionItem] = useState<RevisionScheduleItem | null>(null);
+
+  // Sync active note, folder, and subject from URL query params
   useEffect(() => {
     const noteParam = searchParams.get('note');
+    const folderParam = searchParams.get('folder');
+    const subjectParam = searchParams.get('subject');
+
     if (noteParam && notes.some((n) => n.id === noteParam)) {
       setActiveNoteId(noteParam);
+      const n = notes.find((item) => item.id === noteParam);
+      if (n?.folderId) setSelectedFolderId(n.folderId);
+      if (n?.subjectId) setSelectedSubjectId(n.subjectId);
       setViewState('document_editor');
+    } else if (folderParam && folders.some((f) => f.id === folderParam)) {
+      setSelectedFolderId(folderParam);
+      const f = folders.find((item) => item.id === folderParam);
+      if (f?.subjectId) setSelectedSubjectId(f.subjectId);
+      setViewState('folder_explorer');
+    } else if (subjectParam && subjects.some((s) => s.id === subjectParam)) {
+      setSelectedSubjectId(subjectParam);
+      setSelectedFolderId(null);
+      setViewState('folder_explorer');
     }
-  }, [searchParams, notes, setActiveNoteId]);
+  }, [searchParams, notes, folders, subjects, setActiveNoteId]);
 
   const activeNote = notes.find((n) => n.id === activeNoteId) || null;
   const currentFolder = folders.find((f) => f.id === selectedFolderId) || null;
@@ -68,6 +104,81 @@ export const NotesWorkspace: React.FC = () => {
     setModalSubjectId(subId || currentSubject?.id);
     setModalParentId(parentId !== undefined ? parentId : currentFolder?.id);
     setIsCreateFolderOpen(true);
+  };
+
+  // Revision Modal Handlers
+  const handleOpenScheduleModalFromExplorer = (item: SelectedItem) => {
+    if (item.type === 'directory') {
+      if (item.data.isSubject) {
+        setScheduleModalTarget({
+          type: 'subject',
+          targetId: item.data.id,
+          subjectId: item.data.id,
+        });
+      } else {
+        setScheduleModalTarget({
+          type: 'folder',
+          targetId: item.data.id,
+          subjectId: item.data.rawFolder?.subjectId || currentSubject?.id,
+        });
+      }
+    } else {
+      setScheduleModalTarget({
+        type: 'file',
+        targetId: item.data.id,
+        subjectId: item.data.subjectId || currentSubject?.id,
+      });
+    }
+    setIsScheduleModalOpen(true);
+  };
+
+  const handleOpenScheduleModalFromEditor = (noteId: string, subjectId?: string) => {
+    setScheduleModalTarget({
+      type: 'file',
+      targetId: noteId,
+      subjectId: subjectId || currentSubject?.id,
+    });
+    setIsScheduleModalOpen(true);
+  };
+
+  const handleOpenAIGenerator = (subId?: string, noteId?: string) => {
+    setAiGeneratorSubjectId(subId || currentSubject?.id);
+    setAiGeneratorNoteId(noteId);
+    setIsAIGeneratorOpen(true);
+  };
+
+  const handleStartActiveRevision = (
+    noteId?: string,
+    folderId?: string,
+    subjectId?: string,
+    title?: string
+  ) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const targetType = noteId ? 'file' : 'folder';
+    const targetId = noteId || folderId || currentFolder?.id || 'root_dir';
+    const subId = subjectId || currentSubject?.id || 'sub_default';
+    const sub = subjects.find((s) => s.id === subId);
+
+    // Look for existing item or create active one
+    const existing = revisionItems.find((r) => r.targetId === targetId);
+    if (existing) {
+      setActiveRevisionItem(existing);
+    } else {
+      const newItem = scheduleRevision({
+        targetType,
+        targetId,
+        title: title || (noteId ? 'Note Document' : 'Study Folder'),
+        subjectId: subId,
+        subjectName: sub?.name || 'General Study',
+        folderName: currentFolder?.name,
+        scheduledDate: todayStr,
+        scheduledTime: 'Now',
+        intervalDays: 1,
+        emailReminder: false,
+      });
+      setActiveRevisionItem(newItem);
+    }
+    setIsActiveRevisionOpen(true);
   };
 
   return (
@@ -195,6 +306,9 @@ export const NotesWorkspace: React.FC = () => {
               <RichDocumentEditor
                 note={activeNote}
                 onBackToFolder={() => setViewState('folder_explorer')}
+                onOpenScheduleModal={handleOpenScheduleModalFromEditor}
+                onOpenAIGenerator={handleOpenAIGenerator}
+                onStartActiveRevision={handleStartActiveRevision}
               />
             </div>
           ) : (
@@ -215,12 +329,15 @@ export const NotesWorkspace: React.FC = () => {
               }}
               onOpenCreateFolderModal={(sId, pId) => handleOpenCreateFolder(sId, pId)}
               onOpenCreateSubjectModal={() => setIsCreateSubjectOpen(true)}
+              onOpenScheduleModal={handleOpenScheduleModalFromExplorer}
+              onOpenAIGenerator={handleOpenAIGenerator}
+              onStartActiveRevision={handleStartActiveRevision}
             />
           )}
         </div>
       </div>
 
-      {/* Modals */}
+      {/* Creation Modals */}
       <CreateSubjectModal
         isOpen={isCreateSubjectOpen}
         onClose={() => setIsCreateSubjectOpen(false)}
@@ -238,6 +355,41 @@ export const NotesWorkspace: React.FC = () => {
         onClose={() => setIsFileUploadOpen(false)}
         defaultSubjectId={currentSubject?.id}
         defaultFolderId={currentFolder?.id}
+      />
+
+      {/* Spaced Repetition & Revision Modals */}
+      <SetRevisionScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => setIsScheduleModalOpen(false)}
+        defaultType={scheduleModalTarget.type}
+        defaultTargetId={scheduleModalTarget.targetId}
+        defaultSubjectId={scheduleModalTarget.subjectId}
+        onStartActiveRecall={(item) => {
+          setActiveRevisionItem(item);
+          setIsActiveRevisionOpen(true);
+        }}
+        onOpenAIGenerator={(subId, noteId) => {
+          handleOpenAIGenerator(subId, noteId);
+        }}
+      />
+
+      <AIFlashcardGeneratorModal
+        isOpen={isAIGeneratorOpen}
+        onClose={() => setIsAIGeneratorOpen(false)}
+        defaultSubjectId={aiGeneratorSubjectId}
+        defaultNoteId={aiGeneratorNoteId}
+      />
+
+      <ActiveRevisionModal
+        isOpen={isActiveRevisionOpen}
+        onClose={() => {
+          setIsActiveRevisionOpen(false);
+          setActiveRevisionItem(null);
+        }}
+        revisionItem={activeRevisionItem}
+        onOpenAIGenerator={(subId, noteId) => {
+          handleOpenAIGenerator(subId, noteId);
+        }}
       />
     </div>
   );
