@@ -241,3 +241,17 @@ export interface RevisionScheduleItem {
   status: RevisionStatus;
 }
 
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  country?: string;
+  countryFlag?: string;
+  bio?: string;
+  createdAt: string;
+}
+
+export interface UserAccount extends UserProfile {
+  passwordHash: string; // Stored simulated password/hash
+}

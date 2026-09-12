@@ -2,14 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { useApp } from '../../context/AppContext';
 import { RevisionScheduleItem, Flashcard } from '../../types';
-import { ReviewRating, getIntervalPreview } from '../../services/sm2Service';
+import { ReviewRating } from '../../services/sm2Service';
 import {
   Brain,
   Sparkles,
   BookOpen,
-  FileText,
   CheckCircle2,
-  HelpCircle,
   RotateCw,
   ArrowRight,
   ArrowLeft,
@@ -19,12 +17,7 @@ import {
   Award,
   Zap,
   Layers,
-  Search,
-  Sliders,
-  ExternalLink,
 } from 'lucide-react';
-import { useRouter } from '../../context/RouterContext';
-import { markdownToFormattedHtml } from '../../utils/textFormatter';
 
 interface ActiveRevisionModalProps {
   isOpen: boolean;
@@ -47,12 +40,11 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
   revisionItem,
   onOpenAIGenerator,
 }) => {
-  const { notes, folders, subjects, flashcards, reviewFlashcard, completeRevision } = useApp();
-  const { navigate } = useRouter();
+  const { flashcards, reviewFlashcard, completeRevision } = useApp();
 
   // Workflow stages: 'study' -> 'decision' -> 'quiz' | 'manual_interval' -> 'completed'
   const [stage, setStage] = useState<'study' | 'decision' | 'quiz' | 'manual_interval' | 'completed'>('study');
-  const [studyMode, setStudyMode] = useState<'ai_cards' | 'custom_cards' | 'manual_reader'>('ai_cards');
+  const [studyMode, setStudyMode] = useState<'ai_cards' | 'custom_cards'>('ai_cards');
 
   // AI Flashcards state
   const [currentAICardIndex, setCurrentAICardIndex] = useState(0);
@@ -62,9 +54,6 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
   const [currentCustomCardIndex, setCurrentCustomCardIndex] = useState(0);
   const [isCustomCardFlipped, setIsCustomCardFlipped] = useState(false);
   const [reviewedCustomCount, setReviewedCustomCount] = useState(0);
-
-  // Reader Search state
-  const [readerSearch, setReaderSearch] = useState('');
 
   // AI Quiz state
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -76,6 +65,7 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setStage('study');
+      setStudyMode('ai_cards');
       setCurrentAICardIndex(0);
       setIsAICardFlipped(false);
       setCurrentCustomCardIndex(0);
@@ -84,23 +74,10 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
       setCurrentQuestionIndex(0);
       setSelectedAnswers({});
       setIsQuizSubmitted(false);
-      setReaderSearch('');
     }
   }, [isOpen, revisionItem?.id]);
 
   if (!revisionItem) return null;
-
-  // Retrieve target text content
-  let targetContent = '';
-  let targetNote: typeof notes[0] | undefined = undefined;
-  if (revisionItem.targetType === 'file') {
-    targetNote = notes.find((n) => n.id === revisionItem.targetId);
-    targetContent = targetNote?.content || '';
-  } else {
-    // Combine notes in the folder
-    const folderDocs = notes.filter((n) => n.folderId === revisionItem.targetId);
-    targetContent = folderDocs.map((d) => `## ${d.title}\n\n${d.content}`).join('\n\n---\n\n');
-  }
 
   // Retrieve custom flashcards linked to this note or subject
   const linkedCustomCards: Flashcard[] = flashcards.filter((c) => {
@@ -222,20 +199,6 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
   const currentAICard = aiSampleCards[currentAICardIndex];
   const currentCustomCard = linkedCustomCards[currentCustomCardIndex];
 
-  const handleFollowNotesRedirect = () => {
-    onClose();
-    if (revisionItem.targetType === 'file') {
-      navigate(`/notes?note=${revisionItem.targetId}`);
-    } else if (revisionItem.targetType === 'folder') {
-      const subQuery = revisionItem.subjectId ? `&subject=${revisionItem.subjectId}` : '';
-      navigate(`/notes?folder=${revisionItem.targetId}${subQuery}`);
-    } else if (revisionItem.targetType === 'subject') {
-      navigate(`/notes?subject=${revisionItem.subjectId}`);
-    } else {
-      navigate('/notes');
-    }
-  };
-
   const handleQuickMarkComplete = () => {
     const nextDays = revisionItem.intervalDays ? Math.max(1, Math.round(revisionItem.intervalDays * 2)) : 3;
     completeRevision(revisionItem.id, nextDays);
@@ -252,16 +215,16 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
     >
       <div className="space-y-4">
         {/* ========================================================================= */}
-        {/* STAGE 1: STUDY SESSION (3 Intuitive Navigation Modes)                     */}
+        {/* STAGE 1: STUDY SESSION (2 Intuitive Recall Modes)                         */}
         {/* ========================================================================= */}
         {stage === 'study' && (
           <div className="space-y-4">
-            {/* Mode Switcher Tabs: AI Cards, Custom Deck, Follow Notes */}
-            <div className="flex items-center gap-1 p-1 bg-slate-950 border border-slate-800 rounded-2xl">
+            {/* Mode Switcher Tabs: AI Cards vs Custom Deck */}
+            <div className="flex items-center gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-2xl">
               <button
                 type="button"
                 onClick={() => setStudyMode('ai_cards')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   studyMode === 'ai_cards'
                     ? 'bg-indigo-600 text-white shadow-sm font-bold'
                     : 'text-slate-400 hover:text-slate-200'
@@ -274,27 +237,14 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
               <button
                 type="button"
                 onClick={() => setStudyMode('custom_cards')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   studyMode === 'custom_cards'
                     ? 'bg-indigo-600 text-white shadow-sm font-bold'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 <Layers className="w-3.5 h-3.5 text-amber-300" />
-                <span>My Cards ({linkedCustomCards.length})</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setStudyMode('manual_reader')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
-                  studyMode === 'manual_reader'
-                    ? 'bg-indigo-600 text-white shadow-sm font-bold'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <FileText className="w-3.5 h-3.5 text-blue-300" />
-                <span>Follow My Notes</span>
+                <span>My Custom Deck ({linkedCustomCards.length})</span>
               </button>
             </div>
 
@@ -527,64 +477,6 @@ export const ActiveRevisionModal: React.FC<ActiveRevisionModalProps> = ({
                     )}
                   </div>
                 )}
-              </div>
-            )}
-
-            {/* --------------------------------------------------------------------- */}
-            {/* OPTION 3: FOLLOW MY NOTES (Full Document Reader with Search & Redirect) */}
-            {/* --------------------------------------------------------------------- */}
-            {studyMode === 'manual_reader' && (
-              <div className="space-y-3">
-                {/* Redirect Banner to Notes Workspace */}
-                <div className="flex flex-wrap items-center justify-between gap-2.5 p-3.5 bg-gradient-to-r from-indigo-950/60 via-purple-950/40 to-slate-900 border border-indigo-500/40 rounded-2xl text-xs shadow-md">
-                  <div className="flex items-center gap-2.5 text-slate-200 min-w-0">
-                    <BookOpen className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-                    <div className="min-w-0">
-                      <p className="font-bold text-white truncate">
-                        Follow & Edit in Notes Workspace: {revisionItem.title}
-                      </p>
-                      <p className="text-[11px] text-slate-400 truncate">
-                        Jump directly into the full folder and document editor
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleFollowNotesRedirect}
-                    className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 active:scale-95 transition-all"
-                  >
-                    <span>Open in Notes</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {/* In-Note Search Bar */}
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Search keywords in note content..."
-                    value={readerSearch}
-                    onChange={(e) => setReaderSearch(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                  />
-                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
-                </div>
-
-                {/* Formatted Note Content Box */}
-                <div className="p-6 rounded-3xl bg-slate-950/90 border border-slate-800 max-h-[300px] overflow-y-auto space-y-3 text-slate-100 text-sm leading-relaxed prose prose-invert max-w-none shadow-inner">
-                  {targetContent.trim() ? (
-                    <div
-                      dangerouslySetInnerHTML={{
-                        __html: markdownToFormattedHtml(targetContent),
-                      }}
-                    />
-                  ) : (
-                    <div className="text-center py-8 text-slate-500 text-xs italic">
-                      (This note is currently empty)
-                    </div>
-                  )}
-                </div>
               </div>
             )}
 

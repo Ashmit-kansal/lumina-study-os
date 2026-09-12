@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { useApp } from '../../context/AppContext';
+import { useAuth } from '../../context/AuthContext';
 import { RevisionScheduleItem } from '../../types';
 import {
   Calendar,
@@ -39,6 +40,7 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
   onOpenAIGenerator,
 }) => {
   const { notes, folders, subjects, scheduleRevision } = useApp();
+  const { user } = useAuth();
 
   const [targetType, setTargetType] = useState<'file' | 'folder' | 'subject'>('file');
   const [selectedFileId, setSelectedFileId] = useState<string>('');
@@ -50,11 +52,14 @@ export const SetRevisionScheduleModal: React.FC<SetRevisionScheduleModalProps> =
   const [customDate, setCustomDate] = useState<string>('');
   const [scheduledTime, setScheduledTime] = useState<string>('09:00 AM');
   const [emailReminder, setEmailReminder] = useState<boolean>(true);
-  const [userEmail, setUserEmail] = useState<string>('student@university.edu');
+  const [userEmail, setUserEmail] = useState<string>(user?.email || 'student@university.edu');
 
   // Sync props when modal opens
   useEffect(() => {
     if (isOpen) {
+      if (user?.email) {
+        setUserEmail(user.email);
+      }
       if (defaultType === 'folder') {
         setTargetType('folder');
         setSelectedFolderId(defaultTargetId || folders[0]?.id || '');

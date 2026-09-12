@@ -11,6 +11,7 @@ import {
 } from '../types';
 import { SEED_STUDY_ROOMS, SEED_ROOM_CHAT_MESSAGES } from '../utils/seedData';
 import { useApp } from './AppContext';
+import { useAuth } from './AuthContext';
 import { useTimer } from './TimerContext';
 
 interface StudyPledge {
@@ -110,6 +111,7 @@ const INITIAL_DIRECT_MESSAGES: Record<string, DirectMessage[]> = {
 };
 
 export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
   const { subjects, studyStreakDays } = useApp();
   const { mode, isRunning, timeRemaining, activeSubjectId } = useTimer();
 
@@ -382,10 +384,10 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const localUserPeer: StudierPeer = {
     id: 'peer_local_user',
-    name: 'You',
-    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
-    country: 'Global',
-    countryFlag: '⚡',
+    name: user?.name || 'You',
+    avatar: user?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
+    country: user?.country || 'Global',
+    countryFlag: user?.countryFlag || '⚡',
     subjectName: activeSubject?.name || 'General Focus',
     subjectColor: '#6366f1',
     status: mode === 'focus' ? 'focusing' : 'break',
@@ -552,8 +554,8 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: 'dm_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       friendId,
       senderId: 'local_user',
-      senderName: 'You',
-      senderAvatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
+      senderName: user?.name || 'You',
+      senderAvatar: user?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
       content: content.trim(),
       timestamp: timeStr,
       isLocalUser: true,
@@ -593,7 +595,7 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }));
       }, 2500);
     }
-  }, [allKnownPeers]);
+  }, [allKnownPeers, user]);
 
   // Reporting System
   const reportUser = useCallback((reportData: { targetPeerId: string; targetPeerName: string; reason: string; details?: string; blockUser?: boolean }) => {
@@ -639,9 +641,9 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       roomId: activeRoomId,
       senderId: 'local_user',
-      senderName: 'You',
-      senderAvatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
-      senderCountryFlag: '⚡',
+      senderName: user?.name || 'You',
+      senderAvatar: user?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
+      senderCountryFlag: user?.countryFlag || '⚡',
       senderSubject: activeSub?.name || 'Focus Session',
       content: content.trim(),
       timestamp: timeStr,
@@ -653,7 +655,7 @@ export const RoomProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       [activeRoomId]: [...(prev[activeRoomId] || []), newMessage],
     }));
-  }, [activeRoomId, subjects, activeSubjectId]);
+  }, [activeRoomId, subjects, activeSubjectId, user]);
 
   const reactToMessage = useCallback((messageId: string, emoji: string) => {
     setChatMessages((prev) => {

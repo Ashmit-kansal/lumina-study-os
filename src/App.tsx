@@ -1,11 +1,14 @@
 import React from 'react';
 import { AppProvider } from './context/AppContext';
+import { AuthProvider } from './context/AuthContext';
 import { TimerProvider } from './context/TimerContext';
 import { AudioProvider } from './context/AudioContext';
 import { RoomProvider } from './context/RoomContext';
 import { RouterProvider, useRouter } from './context/RouterContext';
 import { Header } from './components/layout/Header';
 import { QuickAudioFloatingBar } from './components/layout/QuickAudioFloatingBar';
+import { AuthModal } from './components/auth/AuthModal';
+import { UserProfileModal } from './components/auth/UserProfileModal';
 import { HomeView } from './components/home/HomeView';
 import { PomodoroTimer } from './components/pomodoro/PomodoroTimer';
 import { TodayStatsCard } from './components/pomodoro/TodayStatsCard';
@@ -114,23 +117,29 @@ const MainAppContent: React.FC = () => {
 
       {/* Bottom Floating Lo-Fi Audio Controller */}
       <QuickAudioFloatingBar onOpenStudyRoom={() => navigateToTab('rooms')} />
+
+      {/* Global Authentication & Profile Modals */}
+      <AuthModal />
+      <UserProfileModal />
     </div>
   );
 };
 
 export const App: React.FC = () => {
   return (
-    <AppProvider>
-      <TimerProvider>
-        <AudioProvider>
-          <RoomProvider>
-            <RouterProvider>
-              <MainAppContent />
-            </RouterProvider>
-          </RoomProvider>
-        </AudioProvider>
-      </TimerProvider>
-    </AppProvider>
+    <AuthProvider>
+      <AppProvider>
+        <TimerProvider>
+          <AudioProvider>
+            <RoomProvider>
+              <RouterProvider>
+                <MainAppContent />
+              </RouterProvider>
+            </RoomProvider>
+          </AudioProvider>
+        </TimerProvider>
+      </AppProvider>
+    </AuthProvider>
   );
 };
 
